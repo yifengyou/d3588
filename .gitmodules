@@ -1,6 +1,8 @@
 [submodule "kernel-5.10"]
 	path = kernel-5.10
 	url = https://github.com/yifengyou/d3588-kernel
+	branch = d3588
 [submodule "u-boot-v2017"]
 	path = u-boot-v2017
 	url = https://github.com/yifengyou/d3588-uboot
+	branch = d3588
