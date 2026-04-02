@@ -56,7 +56,7 @@ jobs:
           sudo chown -R runner.runner /builder
           df -Th
 
-      - name: Run Kernel Build in Ubuntu 20.04 container
+      - name: Run Kernel Build in Ubuntu 22.04 container
         working-directory: /builder
         run: |
           pwd
@@ -68,7 +68,7 @@ jobs:
             -v /dev:/dev \
             -v /builder:/workspace \
             -w /workspace \
-            ubuntu:20.04 \
+            ubuntu:22.04 \
             bash -c "
               chmod +x /workspace/kdevbuild/official_5.10.198_kernel.sh ;
               /workspace/kdevbuild/official_5.10.198_kernel.sh
