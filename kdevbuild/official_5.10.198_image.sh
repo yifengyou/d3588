@@ -66,6 +66,18 @@ else
 fi
 
 ls -alh ${WORKDIR}/rockdev/rootfs.img
+# update rootfs with official oem firmware/kernel module
+if [ -d ${WORKDIR}/firmware ]; then
+  find ${WORKDIR}/firmware
+  mount ${WORKDIR}/rockdev/rootfs.img /mnt
+
+  cp -a ${WORKDIR}/firmware/* /mnt/
+  ls -alh /mnt/
+
+  sync
+  umount /mnt
+  sync
+fi
 
 #==========================================================================#
 #                        build uboot                                       #
@@ -123,18 +135,6 @@ if [ -d kos/lib/modules ]; then
   else
     echo "Warning: Insufficient space on /mnt (Need: ${REQ}KB, Have: ${AVAIL}KB)"
   fi
-  umount /mnt
-  sync
-fi
-
-# update rootfs with firmware
-if [ -d ${WORKDIR}/firmware ]; then
-  find ${WORKDIR}/firmware
-  mount ${WORKDIR}/rockdev/rootfs.img /mnt
-  mkdir -p /mnt/lib/firmware
-  cp -a ${WORKDIR}/firmware/* /mnt/lib/firmware/
-  ls -alh /mnt/lib/firmware/
-  sync
   umount /mnt
   sync
 fi
