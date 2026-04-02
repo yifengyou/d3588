@@ -48,9 +48,8 @@ mkdir -p ${WORKDIR}/release
 #                        build uboot                                       #
 #==========================================================================#
 cd ${WORKDIR}/
-# https://github.com/yifengyou/d3588-uboot.git fork from radxa/u-boot.git
-# git clone -b stable-5.10-rock5 https://github.com/yifengyou/d3588-uboot.git u-boot.git
-git clone -b stable-5.10-rock5 https://github.com/radxa/u-boot.git u-boot.git
+
+git clone --depth 1 -b stable-5.10.198-rock5 https://github.com/radxa/u-boot.git u-boot.git
 cd u-boot.git
 ls -alh
 
@@ -70,7 +69,7 @@ rm -rf spl/u-boot-spl*
 
 # Start building (U-Boot, SPL, etc.)
 make CROSS_COMPILE=${CROSS_COMPILE_ARM64} liontron-d3588_defconfig
-make CROSS_COMPILE=${CROSS_COMPILE_ARM64} -j`nproc`
+make CROSS_COMPILE=${CROSS_COMPILE_ARM64} -j$(nproc)
 
 # Call the official build.
 ./make.sh rk3588
@@ -80,7 +79,6 @@ ls -alh fit/uboot.itb
 cp -a fit/uboot.itb uboot.img
 ls -alh uboot.img
 
-
 mv uboot.img ${WORKDIR}/release/uboot.img
 md5sum ${WORKDIR}/release/uboot.img
 
@@ -88,19 +86,98 @@ md5sum ${WORKDIR}/release/uboot.img
 #                        build kernel                                      #
 #==========================================================================#
 cd ${WORKDIR}
-git clone https://github.com/yifengyou/d3588-kernel-5.10.198.git d3588-kernel-5.10.198.git
+git clone --depth 1 https://github.com/yifengyou/d3588-kernel-5.10.198.git d3588-kernel-5.10.198.git
 ls -alh d3588-kernel-5.10.198.git
 cd d3588-kernel-5.10.198.git
-./d3588.sh
-cp -a boot.img ${WORKDIR}/rockdev/boot.img
-ls -alh ${WORKDIR}/rockdev/boot.img
-md5sum ${WORKDIR}/rockdev/boot.img
 
+# build kernel Image
+make ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  KBUILD_BUILD_USER="builder" \
+  KBUILD_BUILD_HOST="kdevbuilder" \
+  LOCALVERSION=-kdev \
+  d3588_defconfig
 
-mv ${WORKDIR}/rockdev/boot.img ${WORKDIR}/release/
+make ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  KBUILD_BUILD_USER="builder" \
+  KBUILD_BUILD_HOST="kdevbuilder" \
+  LOCALVERSION=-kdev \
+  olddefconfig
 
+# show config
+cat .config
 
-cp -a ${WORKDIR}/rockdev/*.img ${WORKDIR}/release/
+# check kver
+KVER=$(make LOCALVERSION=-kdev kernelrelease)
+KVER="${KVER/kdev*/kdev}"
+if [[ "$KVER" != *kdev ]]; then
+  echo "ERROR: KVER does not end with 'kdev'"
+  exit 1
+fi
+echo "KVER: ${KVER}"
+
+make ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  KBUILD_BUILD_USER="builder" \
+  KBUILD_BUILD_HOST="kdevbuilder" \
+  LOCALVERSION=-kdev \
+  dtbs \
+  -j$(nproc)
+
+# silly, using official dtb
+cp -a d3588.dtb ./arch/arm64/boot/dts/rockchip/rk3588-d3588.dtb
+
+make ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  KBUILD_BUILD_USER="builder" \
+  KBUILD_BUILD_HOST="kdevbuilder" \
+  LOCALVERSION=-kdev \
+  -j$(nproc)
+
+make ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  KBUILD_BUILD_USER="builder" \
+  KBUILD_BUILD_HOST="kdevbuilder" \
+  LOCALVERSION=-kdev \
+  modules -j$(nproc)
+
+make ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
+  KBUILD_BUILD_USER="builder" \
+  KBUILD_BUILD_HOST="kdevbuilder" \
+  LOCALVERSION=-kdev \
+  INSTALL_MOD_PATH=$(pwd)/kos \
+  modules_install
+
+# release kernel image
+ls -alh arch/arm64/boot/Image
+md5sum arch/arm64/boot/Image
+cp -a arch/arm64/boot/Image ${WORKDIR}/release/
+
+# release dtb
+ls -alh ./arch/arm64/boot/dts/rockchip/rk3588-d3588.dtb
+md5sum ./arch/arm64/boot/dts/rockchip/rk3588-d3588.dtb
+cp -a ./arch/arm64/boot/dts/rockchip/rk3588-d3588.dtb ${WORKDIR}/release/
+
+# release config
+cp .config ${WORKDIR}/release/config-5.10.198-kdev
+ls -alh ${WORKDIR}/release/config-5.10.198-kdev
+md5sum ${WORKDIR}/release/config-5.10.198-kdev
+
+# release system map
+cp System.map ${WORKDIR}/release/System.map-5.10.198-kdev
+ls -alh ${WORKDIR}/release/System.map-5.10.198-kdev
+md5sum ${WORKDIR}/release/System.map-5.10.198-kdev
+
+# release kernel modules
+if [ -d kos/lib/modules ]; then
+  find kos -name "*.ko"
+  ls -alh kos/lib/modules/
+  tar -zcvf ${WORKDIR}/release/kos.tar.gz kos
+fi
+
+# show all release
 ls -alh ${WORKDIR}/release/
 echo "Build completed successfully!"
 exit 0
