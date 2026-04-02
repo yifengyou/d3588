@@ -1,22 +1,157 @@
-name: Build D3588 Image  (6.6.y)
+name: official kernel 5.10.198
 
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
+      build_type:
+        description: '构建类型'
+        required: false
+        default: 'kernel'
+        type: choice
+        options:
+          - image
+          - kernel
 
 env:
   TZ: America/New_York
   ACTIONS_STEP_DEBUG: true
-  ACTIONS_RUNNER_DEBUG: true
 
 jobs:
-  kdevbuild:
+  build-kernel:
+    if: ${{ github.event.inputs.build_type == 'kernel' }}
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Show environment
+        id: basic_info
+        run: |
+          nproc
+          uname -a
+          cat /etc/*release
+          free -h
+          mount
+          df -h
+          cat /proc/cpuinfo
+          cat /proc/meminfo
+
+      - name: Create simulated physical disk
+        run: |
+          mnt_size=$(expr $(df -h /mnt | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 1)
+          root_size=$(expr $(df -h / | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 4)
+          sudo truncate -s "${mnt_size}"G /mnt/mnt.img
+          sudo truncate -s "${root_size}"G /root.img
+          sudo losetup /dev/loop6 /mnt/mnt.img
+          sudo losetup /dev/loop7 /root.img
+          sudo pvcreate /dev/loop6
+          sudo pvcreate /dev/loop7
+          sudo vgcreate github /dev/loop6 /dev/loop7
+          sudo lvcreate -n runner -l 100%FREE github
+          sudo mkfs.xfs /dev/github/runner
+          sudo mkdir -p /builder
+          sudo mount /dev/github/runner /builder
+          sudo chown -R runner.runner /builder
+          df -Th
+
+      - name: Run Kernel Build in Ubuntu 20.04 container
+        working-directory: /builder
+        run: |
+          pwd
+          sudo /bin/cp -a ${{ github.workspace }}/* .
+          ls -alh
+          sudo docker run --rm \
+            --privileged \
+            --cap-add SYS_ADMIN \
+            -v /dev:/dev \
+            -v /builder:/workspace \
+            -w /workspace \
+            ubuntu:20.04 \
+            bash -c "
+              chmod +x /workspace/kdevbuild/official_5.10.198_kernel.sh ;
+              /workspace/kdevbuild/official_5.10.198_kernel.sh
+            "
+
+      - name: List build output
+        run: |
+          ls -alh  /builder/release/*
+          md5sum /builder/release/*
+
+      - name: Upload Kernel to Release
+        uses: ncipollo/release-action@main
+        timeout-minutes: 8
+        with:
+          tag: official_5.10.198_kernel
+          artifacts: /builder/release/*
+          allowUpdates: true
+          removeArtifacts: false
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: | # official_5.10.198_kernel
+
+            ## 发布内容
+            - **Image** - Linux 内核镜像
+            - **dtb/** - 设备树文件
+            - **kos.tar.gz** - 内核模块压缩包
+            - **uboot.img** - uboot 镜像
+
+            ## 重要提示
+            > **此发布为中间构建产物，非完整固件！**
+            >
+            > **非专业开发人员请勿下载使用**
+
+            ## 免责声明
+            - **按原样提供**：镜像不作任何保证，使用风险自负
+            - **无官方关联**：无任何官方关联关系
+            - **安全提示**：请及时更新补丁、修改默认密码、配置防火墙
+
+  build-image:
+    if: ${{ github.event.inputs.build_type == 'image' }}
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         include:
+          - set_vendor: armbian
+            set_rootfs: armbian_bookworm_gnome_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_bookworm_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_bookworm_xfce_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_bullseye_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_forky_gnome_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_forky_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_forky_xfce_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_jammy_gnome_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_jammy_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_jammy_xfce_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_noble_gnome_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_noble_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_noble_xfce_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_plucky_gnome_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_plucky_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_plucky_xfce_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_trixie_gnome_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_trixie_mini_aarch64.rar
+          - set_vendor: armbian
+            set_rootfs: armbian_trixie_xfce_aarch64.rar
           - set_vendor: istoreos
             set_rootfs: istoreos_24.10.1_arm64.rar
           - set_vendor: istoreos
@@ -195,10 +330,6 @@ jobs:
             set_rootfs: Fedora-Server-Guest-Generic-42-1.1.aarch64.rar
           - set_vendor: fedora
             set_rootfs: Fedora-Server-Guest-Generic-43-1.6.aarch64.rar
-          - set_vendor: fedora
-            set_rootfs: fedora_42_aarch64.rar
-          - set_vendor: fedora
-            set_rootfs: fedora_43_aarch64.rar
           - set_vendor: debian
             set_rootfs: debian_bookworm_12_arm64.rar
           - set_vendor: debian
@@ -219,44 +350,6 @@ jobs:
             set_rootfs: centos_8_aarch64.rar
           - set_vendor: centos
             set_rootfs: centos_9_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_bookworm_gnome_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_bookworm_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_bookworm_xfce_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_bullseye_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_forky_gnome_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_forky_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_forky_xfce_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_jammy_gnome_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_jammy_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_jammy_xfce_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_noble_gnome_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_noble_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_noble_xfce_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_plucky_gnome_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_plucky_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_plucky_xfce_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_trixie_gnome_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_trixie_mini_aarch64.rar
-          - set_vendor: armbian
-            set_rootfs: armbian_trixie_xfce_aarch64.rar
 
     steps:
       - name: Checkout
@@ -292,7 +385,7 @@ jobs:
           sudo chown -R runner.runner /builder
           df -Th
 
-      - name: Run build in Ubuntu 22.04 container
+      - name: Run Image Build in Ubuntu 22.04 container
         working-directory: /builder
         run: |
           pwd
@@ -308,8 +401,8 @@ jobs:
             -e set_rootfs=${{ matrix.set_rootfs }} \
             ubuntu:22.04 \
             bash -c "
-              chmod +x /workspace/kdevbuild/build-d3588-image-k6.6.y.sh ;
-              /workspace/kdevbuild/build-d3588-image-k6.6.y.sh
+              chmod +x /workspace/kdevbuild/official_5.10.198_image.sh ;
+              /workspace/kdevbuild/official_5.10.198_image.sh
             "
 
       - name: List build output
@@ -319,21 +412,22 @@ jobs:
 
       - name: Upload Image to Release
         uses: ncipollo/release-action@main
+        timeout-minutes: 8
         with:
-          tag: D3588-Image-k6.6.y
+          tag: official_5.10.198_image
           artifacts: /builder/release/*
           allowUpdates: true
           removeArtifacts: false
           replacesArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          body: | # D3588-Image-k6.6.y
+          body: | # official_5.10.198_image
 
             ## 系统密码
 
             - 用户名: root   密码: admin
             - 用户名: admin  密码: admin
 
-            ## 镜像使用指引(文件后缀为rockdev.rar)
+            ## 镜像使用指引
 
             解压后打开RKDevTool.exe，选择'下载镜像'，点击'执行'即可
 
@@ -365,7 +459,5 @@ jobs:
             ## 免责声明
 
             - **按原样提供**：镜像不作任何保证，使用风险自负
-            - **无官方关联**：与深圳亮钻科技有限公司无官方关系
+            - **无官方关联**：无任何官方关联关系
             - **安全提示**：请及时更新补丁、修改默认密码、配置防火墙
-
-

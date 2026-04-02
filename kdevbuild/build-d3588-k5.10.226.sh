@@ -1,17 +1,19 @@
 #!/bin/bash
 
-set -uxo pipefail
+set -euxo pipefail
 
 WORKDIR=$(pwd)
+export build_tag="D3588_k5.10.226_${set_release}_${set_desktop}"
+export ROOTFS="armbian_${set_release}_${set_desktop}.rar"
+export ROOTFS_URL="https://github.com/yifengyou/kdev/releases/download/armbian-rootfs/${ROOTFS}"
 export DEBIAN_FRONTEND=noninteractive
-export BUILD_TAG="D3588_k6.6.y_${set_rootfs}"
 
 #==========================================================================#
 #                        init build env                                    #
 #==========================================================================#
 apt-get update
-apt-get install -qq -y ca-certificates
-apt-get install -qq -y --no-install-recommends \
+apt-get install -y ca-certificates
+apt-get install -y --no-install-recommends \
   acl aptly aria2 axel bc binfmt-support binutils-aarch64-linux-gnu bison \
   bsdextrautils btrfs-progs build-essential busybox ca-certificates ccache \
   clang coreutils cpio crossbuild-essential-arm64 cryptsetup curl \
@@ -35,48 +37,46 @@ apt-get install -qq -y --no-install-recommends \
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
 mkdir -p ${WORKDIR}/rockdev
 mkdir -p ${WORKDIR}/release
-mkdir -p /dev
 
 #==========================================================================#
 # Task: Build Root Filesystem (rootfs) using Armbian Build System          #
 #==========================================================================#
-mkdir -p ${WORKDIR}/rootfs
-cd ${WORKDIR}/rootfs/
-
-if [ -z "${set_vendor}" ] || [ -z "${set_rootfs}" ]; then
+if [ -z "${set_desktop}" ] || [ -z "${set_release}" ]; then
   echo "skip rootfs build"
 else
-  echo "ROOTFS:${set_rootfs}"
-  ROOTFS_URL="https://github.com/yifengyou/kdev/releases/download/${set_vendor}-rootfs/${set_rootfs}"
-  echo "ROOTFS_URL:${ROOTFS_URL}"
-
-  aria2c --check-certificate=false \
-    --max-connection-per-server=16 \
-    --split=16 \
-    --human-readable=true \
-    --summary-interval=5 \
-    -o ${set_rootfs} \
-    "${ROOTFS_URL}"
-
+  mkdir -p ${WORKDIR}/rootfs
+  wget -O ${WORKDIR}/rootfs/${ROOTFS} ${ROOTFS_URL}
+  cd ${WORKDIR}/rootfs/
   ls -alh
-  rar x ${set_rootfs}
+  rar x ${ROOTFS}
   ls -alh
   mv rootfs.img ${WORKDIR}/rockdev/rootfs.img
   ls -alh ${WORKDIR}/rockdev
 fi
 
-ls -alh ${WORKDIR}/rockdev/rootfs.img
-
 #==========================================================================#
 #                        build uboot                                       #
 #==========================================================================#
-cd ${WORKDIR}
+cd ${WORKDIR}/
+# https://github.com/yifengyou/d3588-uboot.git fork from radxa/u-boot.git
+# git clone -b stable-5.10-rock5 https://github.com/yifengyou/d3588-uboot.git u-boot.git
+git clone -b stable-5.10-rock5 https://github.com/radxa/u-boot.git u-boot.git
+cd u-boot.git
+ls -alh
 
-mkdir -p D3588-kernel-6.6.y
-cd D3588-kernel-6.6.y
+# apply patch
+if ls "${WORKDIR}/radxa-uboot/"*.patch >/dev/null 2>&1; then
+  git config --global user.name yifengyou
+  git config --global user.email 842056007@qq.com
+  git am ${WORKDIR}/radxa-uboot/*.patch
+fi
 
-wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/D3588-kernel-6.6.y/uboot.img
-ls -alh uboot.img
+# build uboot.img
+chmod +x ${WORKDIR}/radxa-uboot/d3588.sh
+cp -a ${WORKDIR}/radxa-uboot/d3588.sh .
+cat d3588.sh
+./d3588.sh
+
 mv uboot.img ${WORKDIR}/rockdev/uboot.img
 ls -alh ${WORKDIR}/rockdev/uboot.img
 md5sum ${WORKDIR}/rockdev/uboot.img
@@ -85,104 +85,10 @@ md5sum ${WORKDIR}/rockdev/uboot.img
 #                        build kernel                                      #
 #==========================================================================#
 cd ${WORKDIR}
-
-mkdir -p D3588-kernel-6.6.y
-cd D3588-kernel-6.6.y
-
-wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/D3588-kernel-6.6.y/Image
-ls -alh Image
-md5sum Image
-
-wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/D3588-kernel-6.6.y/config-6.6.y-kdev
-ls -alh config-6.6.y-kdev
-md5sum config-6.6.y-kdev
-
-wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/D3588-kernel-6.6.y/System.map-6.6.y-kdev
-ls -alh System.map-6.6.y-kdev
-md5sum System.map-6.6.y-kdev
-
-wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/D3588-kernel-6.6.y/rk3588-liontron-d3588.dtb
-ls -alh rk3588-liontron-d3588.dtb
-md5sum rk3588-liontron-d3588.dtb
-
-wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/D3588-kernel-6.6.y/kos.tar.gz
-ls -alh kos.tar.gz
-md5sum kos.tar.gz
-tar -xf kos.tar.gz
-
-# update rootfs with ko
-if [ -d kos/lib/modules ]; then
-  ls -alh kos/lib/modules
-  find kos -name "*.ko"
-  mount ${WORKDIR}/rockdev/rootfs.img /mnt
-  rm -rf /mnt/lib/modules/* || :
-  mkdir -p /mnt/lib/modules/
-  cp -a kos/lib/modules/* /mnt/lib/modules
-  sync
-  umount /mnt
-  sync
-fi
-
-# update rootfs with firmware skip
-
-# generate boot.img
-dd if=/dev/zero of=boot.img bs=1M count=256
-mkfs.ext2 -U 7A3F0000-0000-446A-8000-702F00006273 -L kdevboot boot.img
-mount boot.img /mnt
-
-mkdir -p /mnt/dtb
-cp -a rk3588-liontron-d3588.dtb /mnt/dtb/
-cp -f Image /mnt/vmlinuz-6.6.y-kdev
-cp -f config-6.6.y-kdev /mnt/config-6.6.y-kdev
-cp -f System.map-6.6.y-kdev /mnt/System.map-6.6.y-kdev
-touch /mnt/initrd.img-6.6.y-kdev
-
-cat >/mnt/extlinux.conf <<EOF
-## /extlinux/extlinux.conf
-##
-## IMPORTANT WARNING
-##
-## The configuration of this file is generated automatically.
-## Do not edit this file manually, use: u-boot-update
-
-default l0
-menu title Kdev U-Boot menu
-prompt 1
-timeout 90
-
-
-label l0
-	menu label Linux kernel 6.6.y-kdev
-	linux vmlinuz-6.6.y-kdev
-	initrd initrd.img-6.6.y-kdev
-	fdt /dtb/rk3588-liontron-d3588.dtb
-	append root=/dev/mmcblk0p3 rootwait rw console=ttyS2,1500000 console=tty1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory net.ifnames=0 biosdevname=0 level=10 loglevel=10 selinux=0 crashkernel=384M-:128M systemd.mask=systemd-growfs@-.service rockchip.dmc_freq=528000 video=HDMI-A-1:1920x1080@60
-
-label l0r
-	menu label Linux kernel 6.6.y-kdev (rescue target)
-	linux vmlinuz-6.6.y-kdev
-	initrd initrd.img-6.6.y-kdev
-	fdt /dtb/rk3588-liontron-d3588.dtb
-	append root=/dev/mmcblk0p3 rootwait rw console=ttyS2,1500000 console=tty1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory net.ifnames=0 biosdevname=0 level=10 loglevel=10 selinux=0 crashkernel=384M-:128M single
-
-EOF
-
-cat >/mnt/armbian_first_run.txt <<EOF
-root_password=admin
-username=admin
-user_password=admin
-shell=bash
-
-EOF
-
-find /mnt
-sync
-umount /mnt
-sync
-
-ls -alh boot.img
-md5sum boot.img
-
+git clone https://github.com/yifengyou/d3588-kernel-5.10.226.git d3588-kernel-5.10.226.git
+ls -alh d3588-kernel-5.10.226.git
+cd d3588-kernel-5.10.226.git
+./d3588.sh
 cp -a boot.img ${WORKDIR}/rockdev/boot.img
 ls -alh ${WORKDIR}/rockdev/boot.img
 md5sum ${WORKDIR}/rockdev/boot.img
@@ -214,36 +120,36 @@ md5sum ${WORKDIR}/rockdev/boot.img
 # template     : ${WORKDIR}/update_img_tmp/
 # output       : ${WORKDIR}/release/
 
-#cd ${WORKDIR}
-#git clone https://github.com/yifengyou/rockchip-tools.git rockchip-tools.git
-#ls -alh ${WORKDIR}/rockchip-tools.git
-#chmod +x ${WORKDIR}/rockchip-tools.git/afptool
-#chmod +x ${WORKDIR}/rockchip-tools.git/rkImageMaker
+cd ${WORKDIR}
+git clone https://github.com/yifengyou/rockchip-tools.git rockchip-tools.git
+ls -alh ${WORKDIR}/rockchip-tools.git
+chmod +x ${WORKDIR}/rockchip-tools.git/afptool
+chmod +x ${WORKDIR}/rockchip-tools.git/rkImageMaker
 
-#mkdir -p ${WORKDIR}/release
-#mkdir -p ${WORKDIR}/update_img_tmp
-#cp -a ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.19-RK3588 \
-#  ${WORKDIR}/update_img_tmp/RKDevTool
-#mkdir -p ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#
-#cp -a ${WORKDIR}/rockdev/uboot.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#cp -a ${WORKDIR}/rockdev/boot.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#cp -a ${WORKDIR}/rockdev/rootfs.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#
-#cd ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#${WORKDIR}/rockchip-tools.git/afptool -pack . temp.img
-#${WORKDIR}/rockchip-tools.git/rkImageMaker \
-#  -RK3588 MiniLoaderAll.bin \
-#  temp.img \
-#  update.img \
-#  -os_type:androidos
-#find . -type f ! -name "update.img" -exec rm -f {} \;
-#
-## generate update.img
-#cd ${WORKDIR}/update_img_tmp/
-#rar a ${WORKDIR}/release/${BUILD_TAG}_update.rar RKDevTool
-#cd ${WORKDIR}/release/
-#sha256sum ${BUILD_TAG}_update.rar
+mkdir -p ${WORKDIR}/release
+mkdir -p ${WORKDIR}/update_img_tmp
+cp -a ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.19-RK3588 \
+  ${WORKDIR}/update_img_tmp/RKDevTool
+mkdir -p ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
+
+cp -a ${WORKDIR}/rockdev/uboot.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
+cp -a ${WORKDIR}/rockdev/boot.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
+cp -a ${WORKDIR}/rockdev/rootfs.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
+
+cd ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
+${WORKDIR}/rockchip-tools.git/afptool -pack . temp.img
+${WORKDIR}/rockchip-tools.git/rkImageMaker \
+  -RK3588 MiniLoaderAll.bin \
+  temp.img \
+  update.img \
+  -os_type:androidos
+find . -type f ! -name "update.img" -exec rm -f {} \;
+
+# generate update.img
+cd ${WORKDIR}/update_img_tmp/
+rar a ${WORKDIR}/release/${build_tag}_update.rar RKDevTool
+cd ${WORKDIR}/release/
+sha256sum ${build_tag}_update.rar
 
 #==========================================================================#
 # Script Purpose: Generate Rockchip Firmware Image with RKDevTool          #
@@ -267,11 +173,11 @@ md5sum ${WORKDIR}/rockdev/boot.img
 # rootfs.img   : ${WORKDIR}/rockdev/rootfs.img
 # uboot.img    : ${WORKDIR}/rockdev/uboot.img
 # boot.img     : ${WORKDIR}/rockdev/boot.img
+# RKDevTool    : ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.19-RK3588/
+# afptool      : ${WORKDIR}/rockchip-tools.git/afptool
+# rkImageMaker : ${WORKDIR}/rockchip-tools.git/rkImageMaker
+# template     : ${WORKDIR}/update_img_tmp/
 # output       : ${WORKDIR}/release/
-
-cd ${WORKDIR}
-git clone https://github.com/yifengyou/rockchip-tools.git rockchip-tools.git
-ls -alh ${WORKDIR}/rockchip-tools.git
 
 mkdir -p ${WORKDIR}/release
 mkdir -p ${WORKDIR}/rockdev_img_tmp
@@ -284,9 +190,9 @@ cp -a ${WORKDIR}/rockdev/boot.img ${WORKDIR}/rockdev_img_tmp/RKDevTool/rockdev/i
 cp -a ${WORKDIR}/rockdev/rootfs.img ${WORKDIR}/rockdev_img_tmp/RKDevTool/rockdev/image/
 
 cd ${WORKDIR}/rockdev_img_tmp/
-rar a ${WORKDIR}/release/${BUILD_TAG} RKDevTool
+rar a ${WORKDIR}/release/${build_tag}_rockdev.rar RKDevTool
 cd ${WORKDIR}/release/
-sha256sum ${BUILD_TAG}
+sha256sum ${build_tag}_rockdev.rar
 
 ls -alh ${WORKDIR}/release/
 
