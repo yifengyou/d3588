@@ -1,10 +1,10 @@
 #!/bin/bash
 
-set -uxo pipefail
+set -euxo pipefail
 
 WORKDIR=$(pwd)
 export DEBIAN_FRONTEND=noninteractive
-export BUILD_TAG="AIOT3588A_5.10.66_${set_rootfs}"
+export BUILD_TAG="D3588_5.10.198_${set_rootfs}"
 
 #==========================================================================#
 #                        init build env                                    #
@@ -31,11 +31,11 @@ apt-get install -qq -y --no-install-recommends \
   python-is-python3 qemu-user-static rar rdfind rename rsync sed \
   squashfs-tools swig tar tree u-boot-tools udev unzip util-linux uuid \
   uuid-dev uuid-runtime vim wget whiptail xfsprogs xsltproc xxd xz-utils \
-  zip zlib1g-dev zstd binwalk ripgrep sudo
+  zip zlib1g-dev zstd binwalk ripgrep sudo &> /dev/null
+
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
 mkdir -p ${WORKDIR}/rockdev
 mkdir -p ${WORKDIR}/release
-mkdir -p /dev
 
 #==========================================================================#
 # Task: Build Root Filesystem (rootfs) using Armbian Build System          #
@@ -72,8 +72,12 @@ ls -alh ${WORKDIR}/rockdev/rootfs.img
 #==========================================================================#
 cd ${WORKDIR}
 
+mkdir -p rockchip-linux_develop-6.6
+cd rockchip-linux_develop-6.6
 
-cp -a official-firmware/smdt_3588A_ubuntu22.04_20240724_113648/uboot.img ${WORKDIR}/rockdev/uboot.img
+wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/official_5.10.198_kernel/uboot.img
+ls -alh uboot.img
+mv uboot.img ${WORKDIR}/rockdev/uboot.img
 ls -alh ${WORKDIR}/rockdev/uboot.img
 md5sum ${WORKDIR}/rockdev/uboot.img
 
@@ -82,87 +86,120 @@ md5sum ${WORKDIR}/rockdev/uboot.img
 #==========================================================================#
 cd ${WORKDIR}
 
+mkdir -p rockchip-linux_develop-6.6
+cd rockchip-linux_develop-6.6
 
-cp -a official-firmware/smdt_3588A_ubuntu22.04_20240724_113648/boot.img ${WORKDIR}/rockdev/boot.img
-ls -alh ${WORKDIR}/rockdev/boot.img
-md5sum ${WORKDIR}/rockdev/boot.img
+wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/official_5.10.198_kernel/Image
+ls -alh Image
+md5sum Image
 
-# update rootfs with official oem firmware/kernel module
-if [ -d ${WORKDIR}/official_5.10.160 ]; then
-  find ${WORKDIR}/official_5.10.160
-  mount ${WORKDIR}/rockdev/rootfs.img /mnt
+wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/official_5.10.198_kernel/config-5.10.198-kdev
+ls -alh config-5.10.198-kdev
+md5sum config-5.10.198-kdev
 
-  if [ -d /mnt/lib/modules/ ]; then
-    cp -a ${WORKDIR}/official_5.10.160/lib/modules/* /mnt/lib/modules/
-  elif [ -d /mnt/usr/lib/modules ]; then
-    cp -a ${WORKDIR}/official_5.10.160/lib/modules/* /mnt/usr/lib/modules/
+wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/official_5.10.198_kernel/System.map-5.10.198-kdev
+ls -alh System.map-5.10.198-kdev
+md5sum System.map-5.10.198-kdev
+
+wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/official_5.10.198_kernel/rk3588-d3588.dtb
+ls -alh rk3588-d3588.dtb
+md5sum rk3588-d3588.dtb
+
+wget -c https://github.com/yifengyou/Liontron-D3588/releases/download/official_5.10.198_kernel/kos.tar.gz
+ls -alh kos.tar.gz
+md5sum kos.tar.gz
+tar -xf kos.tar.gz
+
+# update rootfs with ko
+if [ -d kos/lib/modules ]; then
+  mount "${WORKDIR}/rockdev/rootfs.img" /mnt || exit 1
+  REQ=$(du -sk kos/lib/modules | awk '{print $1}')
+  AVAIL=$(df -k /mnt | tail -1 | awk '{print $4}')
+  if [ "$AVAIL" -ge "$REQ" ]; then
+    rm -rf /mnt/lib/modules/*
+    mkdir -p /mnt/lib/modules
+    cp -a kos/lib/modules/* /mnt/lib/modules
+    sync
+  else
+    echo "Warning: Insufficient space on /mnt (Need: ${REQ}KB, Have: ${AVAIL}KB)"
   fi
-  cp -a ${WORKDIR}/official_5.10.160/vendor /mnt/
+  umount /mnt
+  sync
+fi
 
-  ls -alh /mnt/
-
+# update rootfs with firmware
+if [ -d ${WORKDIR}/firmware ]; then
+  find ${WORKDIR}/firmware
+  mount ${WORKDIR}/rockdev/rootfs.img /mnt
+  mkdir -p /mnt/lib/firmware
+  cp -a ${WORKDIR}/firmware/* /mnt/lib/firmware/
+  ls -alh /mnt/lib/firmware/
   sync
   umount /mnt
   sync
 fi
 
-#==========================================================================#
-# Script Name: Generate Rockchip Updatable Image                           #
-# Description: This script is used to generate an updatable image package  #
-#              for Rockchip devices, including uboot, boot, and rootfs     #
-#              images. The generated images will be placed in the release  #
-#              directory for further use or distribution.                  #
-#                                                                          #
-# Output Directories and Files:                                            #
-#   - ${WORKDIR}/rockdev/uboot.img      : U-Boot bootloader image          #
-#   - ${WORKDIR}/rockdev/boot.img       : Boot partition image             #
-#   - ${WORKDIR}/rockdev/rootfs.img     : Root filesystem image            #
-#   - ${WORKDIR}/release                : Directory containing the final   #
-#                                         packaged update image            #
-#                                                                          #
-# Note: Ensure that all necessary source files are present in the          #
-#       specified directories before running this script.                  #
-#==========================================================================#
+# generate boot.img
+dd if=/dev/zero of=boot.img bs=1M count=256
+mkfs.ext2 -U 7A3F0000-0000-446A-8000-702F00006273 -L kdevboot boot.img
+mount boot.img /mnt
 
-# rootfs.img   : ${WORKDIR}/rockdev/rootfs.img
-# uboot.img    : ${WORKDIR}/rockdev/uboot.img
-# boot.img     : ${WORKDIR}/rockdev/boot.img
-# RKDevTool    : ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.37-AIOT3588A/
-# afptool      : ${WORKDIR}/rockchip-tools.git/afptool
-# rkImageMaker : ${WORKDIR}/rockchip-tools.git/rkImageMaker
-# template     : ${WORKDIR}/update_img_tmp/
-# output       : ${WORKDIR}/release/
+mkdir -p /mnt/dtb
+cp -a rk3588-d3588.dtb /mnt/dtb/
+cp -f Image /mnt/vmlinuz-5.10.198-kdev
+cp -f config-5.10.198-kdev /mnt/config-5.10.198-kdev
+cp -f System.map-5.10.198-kdev /mnt/System.map-5.10.198-kdev
+touch /mnt/initrd.img-5.10.198-kdev
 
-#cd ${WORKDIR}
-#git clone https://github.com/yifengyou/rockchip-tools.git rockchip-tools.git
-#ls -alh ${WORKDIR}/rockchip-tools.git
-#chmod +x ${WORKDIR}/rockchip-tools.git/afptool
-#chmod +x ${WORKDIR}/rockchip-tools.git/rkImageMaker
+cat >/mnt/extlinux.conf <<EOF
+## /extlinux/extlinux.conf
+##
+## IMPORTANT WARNING
+##
+## The configuration of this file is generated automatically.
+## Do not edit this file manually, use: u-boot-update
 
-#mkdir -p ${WORKDIR}/release
-#mkdir -p ${WORKDIR}/update_img_tmp
-#cp -a ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.37-AIOT3588A \
-#  ${WORKDIR}/update_img_tmp/RKDevTool
-#mkdir -p ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#
-#cp -a ${WORKDIR}/rockdev/uboot.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#cp -a ${WORKDIR}/rockdev/boot.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#cp -a ${WORKDIR}/rockdev/rootfs.img ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#
-#cd ${WORKDIR}/update_img_tmp/RKDevTool/rockdev/image/
-#${WORKDIR}/rockchip-tools.git/afptool -pack . temp.img
-#${WORKDIR}/rockchip-tools.git/rkImageMaker \
-#  -RK3588 MiniLoaderAll.bin \
-#  temp.img \
-#  update.img \
-#  -os_type:androidos
-#find . -type f ! -name "update.img" -exec rm -f {} \;
-#
-## generate update.img
-#cd ${WORKDIR}/update_img_tmp/
-#rar a ${WORKDIR}/release/${BUILD_TAG}_update.rar RKDevTool
-#cd ${WORKDIR}/release/
-#sha256sum ${BUILD_TAG}_update.rar
+default l0
+menu title Kdev U-Boot menu
+prompt 1
+timeout 90
+
+
+label l0
+	menu label Linux kernel 6.6-kdev
+	linux vmlinuz-5.10.198-kdev
+	initrd initrd.img-5.10.198-kdev
+	fdt /dtb/rk3588-d3588.dtb
+	append root=/dev/mmcblk0p3 rootwait rw console=ttyS2,1500000 console=tty1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory net.ifnames=0 biosdevname=0 level=10 loglevel=10 selinux=0 crashkernel=384M-:128M systemd.mask=systemd-growfs@-.service rockchip.dmc_freq=528000 video=HDMI-A-1:1920x1080@60
+
+label l0r
+	menu label Linux kernel 6.6-kdev (rescue target)
+	linux vmlinuz-5.10.198-kdev
+	initrd initrd.img-5.10.198-kdev
+	fdt /dtb/rk3588-d3588.dtb
+	append root=/dev/mmcblk0p3 rootwait rw console=ttyS2,1500000 console=tty1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory net.ifnames=0 biosdevname=0 level=10 loglevel=10 selinux=0 crashkernel=384M-:128M single
+
+EOF
+
+cat >/mnt/armbian_first_run.txt <<EOF
+root_password=admin
+username=admin
+user_password=admin
+shell=bash
+
+EOF
+
+find /mnt
+sync
+umount /mnt
+sync
+
+ls -alh boot.img
+md5sum boot.img
+
+cp -a boot.img ${WORKDIR}/rockdev/boot.img
+ls -alh ${WORKDIR}/rockdev/boot.img
+md5sum ${WORKDIR}/rockdev/boot.img
 
 #==========================================================================#
 # Script Purpose: Generate Rockchip Firmware Image with RKDevTool          #
@@ -194,7 +231,7 @@ ls -alh ${WORKDIR}/rockchip-tools.git
 
 mkdir -p ${WORKDIR}/release
 mkdir -p ${WORKDIR}/rockdev_img_tmp
-cp -a ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.37-AIOT3588A \
+cp -a ${WORKDIR}/rockchip-tools.git/RKDevTool-v3.19-D3588 \
   ${WORKDIR}/rockdev_img_tmp/RKDevTool
 mkdir -p ${WORKDIR}/rockdev_img_tmp/RKDevTool/rockdev/image/
 
