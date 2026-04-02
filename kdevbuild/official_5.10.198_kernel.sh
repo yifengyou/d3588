@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -uxo pipefail
+set -euxo pipefail
 
 WORKDIR=$(pwd)
 export DEBIAN_FRONTEND=noninteractive
@@ -46,7 +46,7 @@ mkdir -p ${WORKDIR}/release
 #==========================================================================#
 cd ${WORKDIR}/
 
-git clone --depth 1 -b stable-5.10.198-rock5 https://github.com/radxa/u-boot.git u-boot.git
+git clone --depth 1 -b stable-5.10-rock5 https://github.com/radxa/u-boot.git u-boot.git
 cd u-boot.git
 ls -alh
 
