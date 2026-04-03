@@ -30,7 +30,7 @@ index 00000000000..5864f2fb18f
 +++ b/configs/liontron-d3588_defconfig
 @@ -0,0 +1,244 @@
 +CONFIG_ARM=y
-+CONFIG_BOOTCOMMAND="sysboot mmc 0:2 any 0x00500000 /extlinux/extlinux.conf"
++CONFIG_BOOTCOMMAND="sysboot mmc 0:2 any 0x00500000 extlinux.conf"
 +CONFIG_ARCH_ROCKCHIP=y
 +CONFIG_SPL_GPIO_SUPPORT=y
 +CONFIG_SPL_LIBCOMMON_SUPPORT=y
