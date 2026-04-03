@@ -145,7 +145,7 @@ make ARCH=arm64 \
   KBUILD_BUILD_HOST="kdevbuilder" \
   LOCALVERSION=-kdev \
   INSTALL_MOD_PATH=$(pwd)/kos \
-  modules_install
+  modules_install -j$(nproc)
 
 # release kernel image
 ls -alh arch/arm64/boot/Image
