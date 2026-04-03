@@ -156,6 +156,10 @@ cp -f config-5.10.198-kdev /mnt/config-5.10.198-kdev
 cp -f System.map-5.10.198-kdev /mnt/System.map-5.10.198-kdev
 touch /mnt/initrd.img-5.10.198-kdev
 
+cp -a ${WORKDIR}/official-firmware/rk3588dt-l14-oem-debian11-250214/Image /mnt/
+cp -a ${WORKDIR}/official-firmware/rk3588dt-l14-oem-debian11-250214/d3588.dtb /mnt/
+
+
 cat >/mnt/extlinux.conf <<EOF
 ## /extlinux/extlinux.conf
 ##
@@ -183,6 +187,14 @@ label l0r
 	initrd initrd.img-5.10.198-kdev
 	fdt /dtb/rk3588-d3588.dtb
 	append root=/dev/mmcblk0p3 rootwait rw console=ttyS2,1500000 console=tty1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory net.ifnames=0 biosdevname=0 level=10 loglevel=10 selinux=0 crashkernel=384M-:128M single
+
+label l0r
+	menu label Linux kernel 5.10.198 (official)
+	linux Image
+	initrd initrd.img-5.10.198-kdev
+	fdt /d3588.dtb
+	append root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rootwait rw console=ttyS2,1500000 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory net.ifnames=0 biosdevname=0 level=10 loglevel=10 selinux=0 crashkernel=384M-:128M
+
 
 EOF
 
